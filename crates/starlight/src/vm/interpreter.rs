@@ -20,6 +20,7 @@ use profile::{ArithProfile, ByValProfile};
 use std::intrinsics::{likely, unlikely};
 use wtf_rs::unwrap_unchecked;
 pub mod frame;
+pub mod register_frame;
 pub mod stack;
 
 impl GcPointer<Context> {

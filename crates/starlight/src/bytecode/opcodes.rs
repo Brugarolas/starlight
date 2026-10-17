@@ -285,12 +285,20 @@ pub enum Opcode {
 
 pub type RegisterId = u16;
 
+/// Register bytecode is an in-memory instruction stream, not a stable byte encoding.
+///
+/// Program counters and branch offsets are measured in instructions. A branch
+/// offset is relative to the instruction immediately following the branch.
+/// Registers are `u16`; literal, function, name, and feedback pool indices are
+/// `u32`. Every register is initialized to `undefined` on frame entry and remains
+/// a GC root for the lifetime of that frame.
+#[derive(Clone, Debug, PartialEq)]
 pub enum OpCode {
     Move(RegisterId, RegisterId),
     GetLocal(RegisterId, u16),
     SetLocal(RegisterId, u16),
-    GetConstant(RegisterId, u16),
-    GetFunction(RegisterId, u16),
+    GetConstant(RegisterId, u32),
+    GetFunction(RegisterId, u32),
     Swap(RegisterId, RegisterId),
     LoadInt(RegisterId, i32),
     LoadDouble(RegisterId, f64),
@@ -301,10 +309,8 @@ pub enum OpCode {
     LoadNaN(RegisterId),
     /// Call
     ///
-    /// argv[0] - function
-    /// argv[1] - this
-    /// argv[..argc] - arguments
-    ///
+    /// `argv` begins a contiguous `[callee, this, arg0, ..., argN-1]` window.
+    /// `argc` is the explicit argument count; `receiver` receives the result.
     Call {
         receiver: RegisterId,
         argv: RegisterId,
@@ -312,28 +318,31 @@ pub enum OpCode {
     },
     /// Tail call
     ///
-    /// argv[0] - function
-    /// argv[1] - this
-    /// argv[..argc] - arguments
+    /// `argv` uses the same window as `Call`; the current frame is replaced
+    /// by the callee and no result register is written.
     TailCall {
         argv: RegisterId,
         argc: u16,
     },
     /// Call constructor
     ///
-    /// argv[0] - object
-    /// argv[..argc] - arguments
+    /// `argv` begins a `[callee, new_target, arg0, ..., argN-1]` window.
+    /// `dest` receives the result after ordinary JavaScript constructor rules.
     CallConstructor {
+        dest: RegisterId,
         argv: RegisterId,
         argc: u16,
     },
 
     CreateArray {
         dest: RegisterId,
-        size: u32,
+        /// Start of `length` consecutive element-value registers.
+        source: RegisterId,
+        length: u32,
     },
-    CreateArrayUnknownSize {
+    CreateArrayFromIterable {
         dest: RegisterId,
+        source: RegisterId,
     },
     CreateObject {
         dest: RegisterId,
@@ -341,13 +350,14 @@ pub enum OpCode {
     CreateObjectWithStructure {
         dest: RegisterId,
         /// Index to structures vector.
-        structure: u16,
+        structure: u32,
     },
 
     Return {
         source: RegisterId,
     },
 
+    /// Branch offsets are relative to the instruction after the branch.
     Jump {
         offset: i32,
     },
@@ -597,6 +607,57 @@ pub enum OpCode {
         dst: RegisterId,
         src: RegisterId,
     },
+    GlobalThis {
+        dst: RegisterId,
+    },
+    DeleteGlobal {
+        dst: RegisterId,
+        prop: u32,
+    },
+    Spread {
+        dst: RegisterId,
+        src: RegisterId,
+    },
+    CallBuiltin {
+        dest: RegisterId,
+        /// Start of the contiguous `[callee, this, arg0, ..., argN-1]` window.
+        argv: RegisterId,
+        argc: u16,
+        /// Index in the interpreter's builtin function table.
+        builtin: u32,
+        /// Builtin-specific effect flags.
+        effect: u8,
+    },
+    ForInInit {
+        iterator: RegisterId,
+        source: RegisterId,
+        done_offset: i32,
+    },
+    ForInNext {
+        iterator: RegisterId,
+        dest: RegisterId,
+        done_offset: i32,
+    },
+    ForInClose {
+        iterator: RegisterId,
+    },
+    ForOfInit {
+        iterator: RegisterId,
+        source: RegisterId,
+    },
+    ForOfNext {
+        iterator: RegisterId,
+        dest: RegisterId,
+        done_offset: i32,
+    },
+    ForOfClose {
+        iterator: RegisterId,
+    },
+    NewGenerator {
+        dest: RegisterId,
+        function: RegisterId,
+    },
+    Nop,
     InitialYield,
     Yield {
         src_dest: RegisterId,

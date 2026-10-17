@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
     bytecode::{
-        block::BytecodeBlock,
+        block::{BranchKind, BranchSite, BytecodeBlock, BytecodeValidationError, InstructionIndex},
         opcodes::{OpCode, RegisterId},
     },
     gc::GcPointer,
@@ -115,7 +115,26 @@ impl Generator {
         ix as _
     }
     pub fn emit(&mut self, opcode: OpCode) {
-        self.block.compiled_mut().code.push(opcode);
+        self.block.compiled_mut().emit(opcode);
+    }
+    pub fn emit_branch(&mut self, kind: BranchKind) -> BranchSite {
+        self.block.compiled_mut().emit_branch(kind)
+    }
+    pub fn patch_branch(
+        &mut self,
+        site: BranchSite,
+        target: InstructionIndex,
+    ) -> Result<(), BytecodeValidationError> {
+        self.block.compiled_mut().patch_branch(site, target)
+    }
+    pub fn finalize_register_bytecode(
+        &mut self,
+        parameter_count: u32,
+    ) -> Result<(), BytecodeValidationError> {
+        let block = self.block.compiled_mut();
+        block.register_count = self.registers.register_count();
+        block.parameter_count = parameter_count;
+        block.validate()
     }
     /// Push scope and return current scope depth
     pub fn push_scope(&mut self) -> u32 {
@@ -316,6 +335,153 @@ impl Visit for swc_ecmascript::ast::Expr {
     fn visit(&self, generator: &mut Generator) -> Self::Result {
         match self {
             Self::Lit(literal) => literal.visit(generator),
+            Self::Ident(ident) => {
+                let access = ident.visit(generator)?;
+                generator.acess_get(access)
+            }
+            Self::Paren(paren) => paren.expr.visit(generator),
+            Self::Assign(assign) => {
+                if assign.op != swc_ecmascript::ast::AssignOp::Assign {
+                    todo!("Register compound-assignment code generation")
+                }
+                let value = assign.right.visit(generator)?;
+                generator.registers.protect(value);
+                let access = match &assign.left {
+                    swc_ecmascript::ast::PatOrExpr::Expr(expression) => match &**expression {
+                        swc_ecmascript::ast::Expr::Ident(ident) => ident.visit(generator)?,
+                        _ => todo!("Register assignment target code generation"),
+                    },
+                    swc_ecmascript::ast::PatOrExpr::Pat(pattern) => match &**pattern {
+                        swc_ecmascript::ast::Pat::Ident(ident) => ident.id.visit(generator)?,
+                        _ => todo!("Register assignment pattern code generation"),
+                    },
+                };
+                generator.access_set(value, access)?;
+                generator.registers.unprotect(value);
+                Ok(value)
+            }
+            Self::Bin(binary) => {
+                let lhs = binary.left.visit(generator)?;
+                generator.registers.protect(lhs);
+                let rhs = binary.right.visit(generator)?;
+                let opcode = match binary.op {
+                    swc_ecmascript::ast::BinaryOp::Add => OpCode::Add {
+                        dest: lhs,
+                        lhs,
+                        rhs,
+                    },
+                    swc_ecmascript::ast::BinaryOp::Sub => OpCode::Sub {
+                        dest: lhs,
+                        lhs,
+                        rhs,
+                    },
+                    swc_ecmascript::ast::BinaryOp::Mul => OpCode::Mul {
+                        dest: lhs,
+                        lhs,
+                        rhs,
+                    },
+                    swc_ecmascript::ast::BinaryOp::Div => OpCode::Div {
+                        dest: lhs,
+                        lhs,
+                        rhs,
+                    },
+                    swc_ecmascript::ast::BinaryOp::Mod => OpCode::Rem {
+                        dest: lhs,
+                        lhs,
+                        rhs,
+                    },
+                    swc_ecmascript::ast::BinaryOp::BitAnd => OpCode::And {
+                        dest: lhs,
+                        lhs,
+                        rhs,
+                    },
+                    swc_ecmascript::ast::BinaryOp::BitOr => OpCode::Or {
+                        dest: lhs,
+                        lhs,
+                        rhs,
+                    },
+                    swc_ecmascript::ast::BinaryOp::BitXor => OpCode::Xor {
+                        dest: lhs,
+                        lhs,
+                        rhs,
+                    },
+                    swc_ecmascript::ast::BinaryOp::LShift => OpCode::Shl {
+                        dest: lhs,
+                        lhs,
+                        rhs,
+                    },
+                    swc_ecmascript::ast::BinaryOp::RShift => OpCode::Shr {
+                        dest: lhs,
+                        lhs,
+                        rhs,
+                    },
+                    swc_ecmascript::ast::BinaryOp::ZeroFillRShift => OpCode::UShr {
+                        dest: lhs,
+                        lhs,
+                        rhs,
+                    },
+                    swc_ecmascript::ast::BinaryOp::EqEq => OpCode::Equal {
+                        dest: lhs,
+                        lhs,
+                        rhs,
+                    },
+                    swc_ecmascript::ast::BinaryOp::NotEq => OpCode::NotEqual {
+                        dest: lhs,
+                        lhs,
+                        rhs,
+                    },
+                    swc_ecmascript::ast::BinaryOp::EqEqEq => OpCode::StrictEq {
+                        dest: lhs,
+                        lhs,
+                        rhs,
+                    },
+                    swc_ecmascript::ast::BinaryOp::NotEqEq => OpCode::StrictNEq {
+                        dest: lhs,
+                        lhs,
+                        rhs,
+                    },
+                    swc_ecmascript::ast::BinaryOp::Gt => OpCode::Greater {
+                        dest: lhs,
+                        lhs,
+                        rhs,
+                    },
+                    swc_ecmascript::ast::BinaryOp::GtEq => OpCode::GreaterOrEqual {
+                        dest: lhs,
+                        lhs,
+                        rhs,
+                    },
+                    swc_ecmascript::ast::BinaryOp::Lt => OpCode::Less {
+                        dest: lhs,
+                        lhs,
+                        rhs,
+                    },
+                    swc_ecmascript::ast::BinaryOp::LtEq => OpCode::LessOrEqual {
+                        dest: lhs,
+                        lhs,
+                        rhs,
+                    },
+                    _ => todo!("Unsupported register binary operator: {:?}", binary.op),
+                };
+                generator.emit(opcode);
+                generator.registers.unprotect(lhs);
+                generator.registers.unprotect(rhs);
+                Ok(lhs)
+            }
+            Self::Unary(unary) => {
+                let src = unary.arg.visit(generator)?;
+                generator.registers.protect(src);
+                let dst = generator.registers.allocate(true);
+                let opcode = match unary.op {
+                    swc_ecmascript::ast::UnaryOp::Minus => OpCode::Negate { dest: dst, src },
+                    swc_ecmascript::ast::UnaryOp::Plus => OpCode::UnaryPlus { dest: dst, src },
+                    swc_ecmascript::ast::UnaryOp::Tilde => OpCode::Not { dest: dst, src },
+                    swc_ecmascript::ast::UnaryOp::Bang => OpCode::LogicalNot { dest: dst, src },
+                    _ => todo!("Unsupported register unary operator: {:?}", unary.op),
+                };
+                generator.emit(opcode);
+                generator.registers.unprotect(src);
+                Ok(dst)
+            }
             _ => todo!(),
         }
     }
