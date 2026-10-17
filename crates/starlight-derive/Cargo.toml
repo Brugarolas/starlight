@@ -2,7 +2,7 @@
 name = "starlight-derive"
 version = "0.1.0"
 authors = ["playX <gtashnik11@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 
 [lib]
@@ -10,7 +10,7 @@ name = "starlight_derive"
 proc-macro = true
 
 [dependencies]
-syn = "1.0"
-proc-macro2 = "1.0"
-quote = "1.0"
-synstructure = "0.12"
+syn = "3.0.9"
+proc-macro2 = "1.0.107"
+quote = "1.0.47"
+synstructure = "0.14.0"

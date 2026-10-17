@@ -211,11 +211,16 @@ pub fn regexp_split_fast(ctx: GcPointer<Context>, args: &Arguments) -> Result<Js
     //let mut match_position = position;
     // let regexp_is_sticky = regexp.sticky;
     //let regexp_is_unicode = regexp.unicode;
-    let iter = input.splitn(limit as _, RegexPattern(&regexp.matcher));
-    for (i, r) in iter.enumerate() {
-        let str = JsString::new(ctx, r);
-        result.put(ctx, Symbol::Index(i as _), JsValue::new(str), false)?;
+    let mut start = 0;
+    let mut index = 0;
+    for mat in regexp.matcher.find_iter(&input).take(limit.saturating_sub(1) as usize) {
+        let str = JsString::new(ctx, &input[start..mat.start()]);
+        result.put(ctx, Symbol::Index(index as _), JsValue::new(str), false)?;
+        index += 1;
+        start = mat.end();
     }
+    let str = JsString::new(ctx, &input[start..]);
+    result.put(ctx, Symbol::Index(index as _), JsValue::new(str), false)?;
     Ok(JsValue::new(result))
 }
 pub fn regexp_constructor(ctx: GcPointer<Context>, args: &Arguments) -> Result<JsValue, JsValue> {
@@ -487,67 +492,4 @@ pub fn regexp_match(ctx: GcPointer<Context>, args: &Arguments) -> Result<JsValue
 
     let result = JsArray::from_slice(ctx, &matches);
     Ok(JsValue::new(result))
-}
-
-use std::str::pattern::{Pattern, SearchStep, Searcher};
-
-use regress::Matches;
-
-pub struct RegexSearcher<'r, 't> {
-    haystack: &'t str,
-    it: Matches<'r, 't>,
-    last_step_end: usize,
-    next_match: Option<(usize, usize)>,
-}
-pub struct RegexPattern<'r>(&'r Regex);
-impl<'r, 't> Pattern<'t> for RegexPattern<'r> {
-    type Searcher = RegexSearcher<'r, 't>;
-
-    fn into_searcher(self, haystack: &'t str) -> RegexSearcher<'r, 't> {
-        RegexSearcher {
-            haystack,
-            it: self.0.find_iter(haystack),
-            last_step_end: 0,
-            next_match: None,
-        }
-    }
-}
-
-unsafe impl<'r, 't> Searcher<'t> for RegexSearcher<'r, 't> {
-    #[inline]
-    fn haystack(&self) -> &'t str {
-        self.haystack
-    }
-
-    #[inline]
-    fn next(&mut self) -> SearchStep {
-        if let Some((s, e)) = self.next_match {
-            self.next_match = None;
-            self.last_step_end = e;
-            return SearchStep::Match(s, e);
-        }
-        match self.it.next() {
-            None => {
-                if self.last_step_end < self.haystack().len() {
-                    let last = self.last_step_end;
-                    self.last_step_end = self.haystack().len();
-                    SearchStep::Reject(last, self.haystack().len())
-                } else {
-                    SearchStep::Done
-                }
-            }
-            Some(m) => {
-                let (s, e) = (m.start(), m.end());
-                if s == self.last_step_end {
-                    self.last_step_end = e;
-                    SearchStep::Match(s, e)
-                } else {
-                    self.next_match = Some((s, e));
-                    let last = self.last_step_end;
-                    self.last_step_end = s;
-                    SearchStep::Reject(last, s)
-                }
-            }
-        }
-    }
 }

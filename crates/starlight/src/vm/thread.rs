@@ -22,27 +22,37 @@ impl Thread {
         let mut buf = std::mem::MaybeUninit::uninit();
         let buf_ptr = buf.as_mut_ptr();
         unsafe {
-            llvm_asm!(
-                "
-                mov [$0+0], rsp
-                mov [$0+8], rax
-                mov [$0+16], rbx
-                mov [$0+24], rcx
-                mov [$0+32], rdx
-                mov [$0+40], rbp
-                mov [$0+48], rsi
-                mov [$0+56], rdi
-                mov [$0+64], r8
-                mov [$0+72], r9
-                mov [$0+80], r10
-                mov [$0+88], r11
-                mov [$0+96], r12
-                mov [$0+104], r13
-                mov [$0+112], r14
-                mov [$0+120], r15
-                
-
-                " :: "r"(buf_ptr) :: "intel"
+            std::arch::asm!(
+                "mov [r10 + 0], rsp",
+                "mov [r10 + 8], rax",
+                "mov [r10 + 16], rbx",
+                "mov [r10 + 24], rcx",
+                "mov [r10 + 32], rdx",
+                "mov [r10 + 40], rbp",
+                "mov [r10 + 48], rsi",
+                "mov [r10 + 56], rdi",
+                "mov [r10 + 64], r8",
+                "mov [r10 + 72], r9",
+                "mov [r10 + 80], r10",
+                "mov [r10 + 88], r11",
+                "mov [r10 + 96], r12",
+                "mov [r10 + 104], r13",
+                "mov [r10 + 112], r14",
+                "mov [r10 + 120], r15",
+                in("r10") buf_ptr,
+                out("rax") _,
+                out("rcx") _,
+                out("rdx") _,
+                out("rsi") _,
+                out("rdi") _,
+                out("r8") _,
+                out("r9") _,
+                out("r11") _,
+                out("r12") _,
+                out("r13") _,
+                out("r14") _,
+                out("r15") _,
+                options(nostack)
             );
         }
         unsafe { buf.assume_init() }

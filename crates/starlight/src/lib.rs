@@ -4,13 +4,11 @@
 #![allow(incomplete_features)]
 #![feature(
     core_intrinsics,
-    llvm_asm,
     linked_list_cursors,
     destructuring_assignment,
     const_raw_ptr_deref,
     stmt_expr_attributes,
     const_type_id,
-    pattern,
     specialization,
     arbitrary_self_types,
     duration_constants

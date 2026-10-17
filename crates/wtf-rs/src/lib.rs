@@ -1,7 +1,6 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
-#![feature(backtrace)]
 pub mod endian;
 pub mod pure_nan;
 pub mod segmented_vec;
@@ -12,7 +11,7 @@ pub mod tagged_ptr;
 pub(crate) fn thread_self() -> u64 {
     #[cfg(windows)]
     unsafe {
-        extern "C" {
+        unsafe extern "C" {
             fn GetCurrentThreadId() -> u32;
         }
         GetCurrentThreadId() as u64
@@ -27,7 +26,7 @@ static mut SINK: usize = 0;
 /// to global variable so compiler does not optimize `value` out.
 pub fn keep_on_stack_noop(value: usize) {
     unsafe {
-        core::ptr::write_volatile(&mut SINK, value);
+        core::ptr::write_volatile(&raw mut SINK, value);
         core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
     }
 }

@@ -317,6 +317,7 @@ impl From<Option<Negative>> for Outcome {
 }
 
 bitflags! {
+    #[derive(Debug, Clone, Copy)]
     struct TestFlags: u16 {
         const STRICT = 0b000000001;
         const NO_STRICT = 0b000000010;
