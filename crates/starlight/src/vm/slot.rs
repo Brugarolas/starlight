@@ -11,7 +11,7 @@ use crate::gc::cell::{GcCell, GcPointer, Trace, Visitor};
 use super::{attributes::*, object::JsObject, property_descriptor::StoredSlot, value::*};
 pub struct Slot {
     pub parent: StoredSlot,
-    pub(crate) base: Option<GcPointer<dyn GcCell>>,
+    pub(crate) base: Option<GcPointer<dyn crate::comet::Collectable>>,
     pub(crate) offset: u32,
     pub(crate) flags: u32,
 }
@@ -82,7 +82,7 @@ impl Slot {
         self.offset
     }
 
-    pub fn base(&self) -> &Option<GcPointer<dyn GcCell>> {
+    pub fn base(&self) -> &Option<GcPointer<dyn crate::comet::Collectable>> {
         &self.base
     }
 
@@ -90,7 +90,7 @@ impl Slot {
         &mut self,
         value: JsValue,
         attributes: AttrSafe,
-        obj: Option<GcPointer<dyn GcCell>>,
+        obj: Option<GcPointer<dyn crate::comet::Collectable>>,
     ) {
         self.set(value, attributes);
         self.make_used();
@@ -103,7 +103,7 @@ impl Slot {
         &mut self,
         value: JsValue,
         attributes: AttrSafe,
-        obj: Option<GcPointer<dyn GcCell>>,
+        obj: Option<GcPointer<dyn crate::comet::Collectable>>,
         offset: u32,
     ) {
         self.set(value, attributes);
@@ -113,7 +113,11 @@ impl Slot {
         self.offset = offset;
     }
 
-    pub fn set_from_slot(&mut self, slot: &StoredSlot, obj: Option<GcPointer<dyn GcCell>>) {
+    pub fn set_from_slot(
+        &mut self,
+        slot: &StoredSlot,
+        obj: Option<GcPointer<dyn crate::comet::Collectable>>,
+    ) {
         self.set_1(slot.value(), slot.attributes(), obj);
     }
 
@@ -153,6 +157,7 @@ impl GcCell for Slot {
     fn deser_pair(&self) -> (usize, usize) {
         unreachable!()
     }
+    crate::impl_comet_compat!(Slot);
 }
 impl Trace for Slot {
     fn trace(&self, tracer: &mut Visitor) {

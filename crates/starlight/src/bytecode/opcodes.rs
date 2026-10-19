@@ -292,11 +292,19 @@ pub type RegisterId = u16;
 /// Registers are `u16`; literal, function, name, and feedback pool indices are
 /// `u32`. Every register is initialized to `undefined` on frame entry and remains
 /// a GC root for the lifetime of that frame.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum OpCode {
     Move(RegisterId, RegisterId),
     GetLocal(RegisterId, u16),
     SetLocal(RegisterId, u16),
+    InitializeLocal(RegisterId, u16),
+    InitializeVar { src: RegisterId, env: RegisterId, at: u16 },
+    GetException { dst: RegisterId },
+    GetCurrentFunction { dst: RegisterId },
+    DeclareGlobal { prop: u32 },
+    CloneEnvironment,
+    PushEnvironment { size: u32 },
+    PopEnvironment,
     GetConstant(RegisterId, u32),
     GetFunction(RegisterId, u32),
     Swap(RegisterId, RegisterId),

@@ -104,3 +104,4 @@ impl Trace for IndexedElements {
     }
 }
 impl GcCell for IndexedElements {}
+crate::impl_comet_compat!(IndexedElements);

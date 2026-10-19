@@ -1,7 +1,5 @@
 use std::intrinsics::unlikely;
 
-use cometgc::gc_size;
-
 use crate::prelude::*;
 use crate::vm::builder::Builtin;
 use crate::vm::{context::Context, function::*};

@@ -11,7 +11,7 @@ use crate::{
     interpreter::callframe::CallFrame,
     options::Options,
 };
-use comet::{internal::finalize_trait::FinalizeTrait, visitor::Visitor};
+use crate::comet::{FinalizeTrait, Visitor};
 use std::{
     collections::HashMap,
     ops::{Deref, DerefMut},
@@ -77,6 +77,7 @@ pub enum ModuleKind {
     NativeUninit(fn(GcPointer<Context>, GcPointer<JsObject>) -> Result<(), JsValue>),
 }
 impl GcCell for ModuleKind {}
+crate::impl_comet_compat!(ModuleKind);
 impl Trace for ModuleKind {
     fn trace(&self, visitor: &mut Visitor) {
         if let Self::Initialized(x) = self {

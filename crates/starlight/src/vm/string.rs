@@ -49,6 +49,7 @@ impl GcCell for JsString {
     fn compute_size(&self) -> usize {
         size_of::<Self>()
     }
+    crate::impl_comet_compat!(JsString);
 }
 impl Finalize<JsString> for JsString {}
 pub struct JsStringObject {

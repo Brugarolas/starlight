@@ -2,17 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 #![allow(incomplete_features)]
-#![feature(
-    core_intrinsics,
-    linked_list_cursors,
-    destructuring_assignment,
-    const_raw_ptr_deref,
-    stmt_expr_attributes,
-    const_type_id,
-    specialization,
-    arbitrary_self_types,
-    duration_constants
-)]
+#![feature(arbitrary_self_types, core_intrinsics, specialization)]
 #![allow(
     unused_unsafe,
     unused_mut,
@@ -208,7 +198,6 @@ static INIT: AtomicBool = AtomicBool::new(false);
 impl Platform {
     pub fn initialize() {
         if INIT.compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed) == Ok(false) {
-            comet::cometgc::GCPlatform::initialize();
             vm::symbol_table::initialize_symbol_table();
         }
     }

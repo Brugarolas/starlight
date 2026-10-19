@@ -155,6 +155,7 @@ impl Symbol {
     }
 }
 impl GcCell for Symbol {}
+crate::impl_comet_compat!(Symbol);
 impl Trace for Symbol {}
 
 pub const DUMMY_SYMBOL: Symbol = Symbol::Key(SymbolID(0));
@@ -250,6 +251,7 @@ impl JsSymbol {
 
 impl Trace for JsSymbol {}
 impl GcCell for JsSymbol {}
+crate::impl_comet_compat!(JsSymbol);
 impl Finalize<JsSymbol> for JsSymbol {}
 
 impl std::fmt::Display for SymbolID {

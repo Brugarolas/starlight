@@ -262,7 +262,7 @@ impl<T: TypedArrayType> TypedArrayStorage<T> {
 
 unsafe impl<T: TypedArrayType> Trace for TypedArrayStorage<T> {
     fn trace(&self, visitor: &mut Visitor) {
-        self.as_slice_mut().iter_mut().for_each(|value| {
+        self.as_slice().iter().for_each(|value| {
             value.trace(visitor);
         });
     }
@@ -272,6 +272,20 @@ impl<T: TypedArrayType> GcCell for TypedArrayStorage<T> {
 
     fn compute_size(&self) -> usize {
         (self.capacity as usize * size_of::<T>()) + size_of::<Self>()
+    }
+}
+
+unsafe impl<T: TypedArrayType> comet::api::Trace for TypedArrayStorage<T> {
+    fn trace(&mut self, visitor: &mut dyn comet::api::Visitor) {
+        crate::comet::bridge_trace(self, visitor);
+    }
+}
+
+unsafe impl<T: TypedArrayType> comet::api::Finalize for TypedArrayStorage<T> {}
+
+impl<T: TypedArrayType> comet::api::Collectable for TypedArrayStorage<T> {
+    fn allocation_size(&self) -> usize {
+        self.compute_size()
     }
 }
 
@@ -286,22 +300,16 @@ impl<T: TypedArrayType> Serializable for TypedArrayStorage<T> {
 }
 
 impl<T: TypedArrayType> Deserializable for TypedArrayStorage<T> {
-    unsafe fn allocate(ctx: GcPointer<Context>, deser: &mut Deserializer) -> *mut GcPointerBase {
+    unsafe fn allocate(mut ctx: GcPointer<Context>, deser: &mut Deserializer) -> *mut GcPointerBase {
         let cap = u32::deserialize_inplace(deser);
         deser.pc -= 4;
-        vm.heap().allocate_raw(
-            vtable_of_type::<Self>() as _,
-            cap as usize * size_of::<T>() + size_of::<Self>() + 16,
-            TypeId::of::<Self>(),
-        )
+        ctx.heap().allocate_raw::<Self>(cap as usize * size_of::<T>() + size_of::<Self>())
     }
     unsafe fn deserialize(at: *mut u8, deser: &mut Deserializer) {
         let cap = u32::deserialize_inplace(deser);
         let size = u32::deserialize_inplace(deser);
-        let mut arr = GcPointer::<TypedArrayStorage<T>> {
-            base: NonNull::new_unchecked(at.sub(size_of::<GcPointerBase>()).cast()),
-            marker: PhantomData,
-        };
+        let base = NonNull::new_unchecked(at.sub(size_of::<GcPointerBase>()).cast());
+        let mut arr = GcPointer::<TypedArrayStorage<T>>::from_raw(base);
         arr.capacity = cap;
 
         for _ in 0..size {
@@ -314,6 +322,7 @@ impl<T: TypedArrayType> Deserializable for TypedArrayStorage<T> {
             cap, size, arr.size, arr.capacity
         );
         assert_eq!(arr.capacity, cap);
+        (*base.as_ptr()).mark_initialized::<Self>();
     }
     unsafe fn deserialize_inplace(_deser: &mut Deserializer) -> Self {
         unreachable!()

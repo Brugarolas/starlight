@@ -5,6 +5,7 @@
 use starlight::vm::context::Context;
 use starlight::{letroot, prelude::*};
 use structopt::*;
+use std::time::{Duration, Instant};
 
 #[cfg(not(debug_assertions))]
 #[global_allocator]
@@ -23,67 +24,75 @@ fn main() {
 
     let mut ctx = Context::new(&mut vm);
 
-    let string = std::fs::read_to_string(&vm.options().file);
-    match string {
+    let exit_code = match std::fs::read_to_string(&vm.options().file) {
         Ok(source) => {
-            let name = vm.options().file.as_os_str().to_str().unwrap().to_string();
-            letroot!(
-                function = foo,
-                match ctx.compile_module(&name, "<script>", &source) {
-                    Ok(function) => function.get_jsobject(),
-                    Err(e) => {
-                        let string = e.to_string(ctx);
-                        match string {
-                            Ok(val) => {
-                                eprintln!("Compilation failed: {}", val);
-                                std::process::exit(1);
-                            }
-                            Err(_e) => {
-                                eprintln!("Failed to get error as string");
-                                std::process::exit(1);
-                            }
-                        }
+            let name = vm.options().file.to_string_lossy().into_owned();
+            let result = if vm.options().register {
+                run_register(ctx, &source)
+            } else {
+                run_module(ctx, &name, &source)
+            };
+            match result {
+                Ok(elapsed) => {
+                    eprintln!("Executed in {}ms", elapsed.as_secs_f64() * 1000.0);
+                    0
+                }
+                Err((stage, error)) => {
+                    let message = error.to_string(ctx).unwrap_or_else(|_| "<unknown error>".into());
+                    eprintln!("{}: {}", stage, message);
+                    let stacktrace = ctx.take_stacktrace();
+                    if !stacktrace.is_empty() {
+                        eprintln!("Stacktrace: \n{}", stacktrace);
                     }
-                }
-            );
-
-            let global = ctx.global_object();
-            let mut module_object = JsObject::new_empty(ctx);
-            let exports = JsObject::new_empty(ctx);
-            module_object
-                .put(ctx, "@exports".intern(), JsValue::new(exports), false)
-                .unwrap_or_else(|_| unreachable!());
-            let mut args = [JsValue::new(module_object)];
-            let mut args = Arguments::new(JsValue::encode_object_value(global), &mut args);
-
-            let start = std::time::Instant::now();
-            let f = function;
-            match function
-                .as_function_mut()
-                .call(ctx, &mut args, JsValue::new(f))
-            {
-                Ok(_) => {
-                    let elapsed = start.elapsed();
-                    eprintln!("Executed in {}ms", elapsed.as_nanos() as f64 / 1000000f64);
-                }
-                Err(e) => {
-                    let str = match e.to_string(ctx) {
-                        Ok(s) => s,
-                        Err(_) => "<unknown error>".to_owned(),
-                    };
-                    eprintln!("Uncaught exception: {}", str);
-                    eprintln!("Stacktrace: \n{}", ctx.take_stacktrace());
+                    1
                 }
             }
         }
         Err(error) => {
             eprintln!("Error while reading JS source: {}", error);
-            std::process::exit(1);
+            1
         }
-    }
+    };
     unsafe {
         vm.dispose();
     }
 
-    std::process::exit(0);
+    std::process::exit(exit_code);
+}
+
+type ExecutionResult = Result<Duration, (&'static str, JsValue)>;
+
+fn run_register(mut ctx: GcPointer<Context>, source: &str) -> ExecutionResult {
+    letroot!(
+        bytecode = stack,
+        ctx.compile_register(source).map_err(|error| ("Compilation failed", error))?
+    );
+    let start = Instant::now();
+    ctx.execute_register(bytecode)
+        .map_err(|error| ("Uncaught exception", error))?;
+    Ok(start.elapsed())
+}
+
+fn run_module(mut ctx: GcPointer<Context>, name: &str, source: &str) -> ExecutionResult {
+    letroot!(
+        function = stack,
+        ctx.compile_module(name, "<script>", source)
+            .map_err(|error| ("Compilation failed", error))?
+            .get_jsobject()
+    );
+    let global = ctx.global_object();
+    letroot!(module_object = stack, JsObject::new_empty(ctx));
+    let exports = JsObject::new_empty(ctx);
+    module_object
+        .put(ctx, "@exports".intern(), JsValue::new(exports), false)
+        .map_err(|error| ("Compilation failed", error))?;
+    let mut args = [JsValue::new(module_object)];
+    let mut args = Arguments::new(JsValue::encode_object_value(global), &mut args);
+    let start = Instant::now();
+    let f = function;
+    function
+        .as_function_mut()
+        .call(ctx, &mut args, JsValue::new(f))
+        .map_err(|error| ("Uncaught exception", error))?;
+    Ok(start.elapsed())
 }

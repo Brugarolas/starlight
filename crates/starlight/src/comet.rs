@@ -1,139 +1,23 @@
 pub use comet as cometgc;
-use comet::gcref::UntypedGcRef;
-use comet::header::HeapObjectHeader;
-use comet::heap::{DeferPoint, Heap as CometHeap, MarkingConstraint};
-pub use comet::internal::finalize_trait::FinalizeTrait as Finalize;
-use comet::internal::gc_info::{GCInfoIndex, GCInfoTrait};
-pub use comet::internal::trace_trait::TraceTrait as Trace;
-pub use comet::visitor::Visitor;
-use cometgc::gcref::GcRef;
+
+use comet::{
+    api::{Gc, HeapObjectHeader, Trace as CometTrace, Visitor as CometVisitor, Weak},
+    gc_base::{MarkingConstraint, MarkingConstraintRuns},
+    immix::{instantiate_sticky_immix, StickyImmix, StickyImmixOptions},
+    mutator::MutatorRef,
+};
+pub use comet::api::Collectable;
 use mopa::mopafy;
-use std::collections::HashMap;
-use std::intrinsics::transmute;
-use std::mem::size_of;
-use std::marker::PhantomData;
-use std::ops::{Deref, DerefMut};
-use std::ptr::NonNull;
+use std::{
+    collections::HashMap,
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+    ptr::NonNull,
+};
 
-use crate::options::Options;
-pub struct Heap {
-    heap: Box<CometHeap>,
-}
-#[allow(dead_code)]
-pub struct SimpleMarkingConstraint {
-    name: String,
-    exec: Box<dyn FnMut(&mut Visitor)>,
-}
-impl SimpleMarkingConstraint {
-    pub fn new(name: &str, exec: impl FnMut(&mut Visitor) + 'static) -> Self {
-        Self {
-            name: name.to_owned(),
-            exec: Box::new(exec),
-        }
-    }
-}
+pub type CometHeap = StickyImmix<comet::gc_base::NoOpStackDecoder>;
 
-impl MarkingConstraint for SimpleMarkingConstraint {
-    fn execute(&mut self, vis: &mut Visitor) {
-        (self.exec)(vis);
-    }
-}
-
-impl Heap {
-    pub fn defer(&self) -> DeferPoint {
-        DeferPoint::new(&self.heap)
-    }
-    pub fn new(opts: &Options) -> Self {
-        let mut configs = comet::Config::default();
-        configs.heap_size = opts.heap_size;
-
-        configs.size_class_progression = opts.size_class_progression;
-        configs.verbose = opts.verbose_gc;
-
-        let mut heap = CometHeap::new(configs);
-        heap.add_core_constraints();
-        Self { heap }
-    }
-    pub fn gc(&mut self) {
-        self.heap.collect_garbage();
-    }
-    pub fn allocate_(
-        &mut self,
-        size: usize,
-        vtable: usize,
-        idx: GCInfoIndex,
-    ) -> Option<NonNull<GcPointerBase>> {
-        unsafe {
-            let ptr = self
-                .heap
-                .allocate_raw(size + size_of::<GcPointerBase>(), idx);
-            match ptr {
-                Some(ptr) => {
-                    let raw = HeapObjectHeader::from_object(ptr.get()).cast::<GcPointerBase>();
-                    idx.get_mut().vtable = vtable;
-
-                    Some(NonNull::new_unchecked(raw))
-                }
-                _ => None,
-            }
-        }
-    }
-
-    pub fn allocate_raw(
-        &mut self,
-        size: usize,
-        vtable: usize,
-        idx: GCInfoIndex,
-    ) -> *mut GcPointerBase {
-        self.allocate_(size, vtable, idx)
-            .unwrap_or_else(|| memory_oom())
-            .as_ptr()
-    }
-
-    pub fn allocate<T: GcCell + GCInfoTrait<T> + Trace + Finalize<T>>(
-        &mut self,
-        value: T,
-    ) -> GcPointer<T> {
-        let size = value.compute_size();
-        let memory = self.allocate_raw(size, vtable_of(&value), T::index());
-        unsafe {
-            (*memory).data::<T>().write(value);
-            GcPointer {
-                base: NonNull::new_unchecked(memory),
-                marker: PhantomData,
-            }
-        }
-    }
-    /*
-    pub fn walk(&mut self,callback: &mut dyn FnMut(*mut GcPointerBase)) -> SafepointScope
-    {
-        let mut point = SafepointScope::new(&mut self.main);
-        self.heap.for_each_cell(&point, callback, weak_refs)
-    }*/
-    pub fn add_constraint(&mut self, constraint: impl MarkingConstraint + 'static) {
-        self.heap.add_constraint(constraint);
-    }
-    pub fn make_weak<T: GcCell>(&mut self, target: GcPointer<T>) -> WeakRef<T> {
-        let weak = unsafe { self.heap.allocate_weak(std::mem::transmute(target)) };
-        WeakRef {
-            ref_: weak,
-            marker: PhantomData,
-        }
-    }
-
-    pub fn collect_if_necessary(&mut self) {
-        self.heap.collect_if_necessary_or_defer();
-    }
-}
-
-/// `GcCell` is a type that can be allocated in GC gc and passed to JavaScript environment.
-///
-///
-/// All cells that is not part of `src/vm` treatened as dummy objects and property accesses
-/// is no-op on them.
-///
 pub trait GcCell: mopa::Any {
-    /// Used when object has dynamic size i.e arrays
     fn compute_size(&self) -> usize {
         std::mem::size_of_val(self)
     }
@@ -148,198 +32,413 @@ pub trait GcCell: mopa::Any {
 }
 
 mopafy!(GcCell);
-#[repr(transparent)]
-pub struct GcPointer<T: GcCell + ?Sized> {
-    base: NonNull<GcPointerBase>,
-    marker: PhantomData<T>,
-}
-
-#[repr(C)]
-pub struct GcPointerBase {
-    hdr: HeapObjectHeader,
-}
-
-impl<T: GcCell + ?Sized> GcPointer<T> {
-    pub fn untyped(self) -> UntypedGcRef {
-        unsafe { std::mem::transmute(self) }
-    }
-    pub fn ptr_eq<U: GcCell + ?Sized>(this: &Self, other: &GcPointer<U>) -> bool {
-        this.base == other.base
-    }
-    #[inline]
-    pub fn as_dyn(self) -> GcPointer<dyn GcCell> {
-        GcPointer {
-            base: self.base,
-            marker: PhantomData,
-        }
-    }
-
-    #[inline]
-    pub fn is<U: Trace + Finalize<U> + GcCell + GCInfoTrait<U>>(self) -> bool {
-        unsafe { (*self.base.as_ptr()).hdr.get_gc_info_index() == U::index() }
-    }
-
-    #[inline]
-    pub fn get_dyn(&self) -> &dyn GcCell {
-        unsafe { (*self.base.as_ptr()).get_dyn() }
-    }
-
-    #[inline]
-    pub fn get_dyn_mut(&mut self) -> &mut dyn GcCell {
-        unsafe { (*self.base.as_ptr()).get_dyn() }
-    }
-
-    #[inline]
-    pub unsafe fn downcast_unchecked<U: GcCell>(self) -> GcPointer<U> {
-        GcPointer {
-            base: self.base,
-            marker: PhantomData,
-        }
-    }
-
-    #[inline]
-    pub fn downcast<U: Trace + Finalize<U> + GcCell + GCInfoTrait<U>>(
-        self,
-    ) -> Option<GcPointer<U>> {
-        if !self.is::<U>() {
-            None
-        } else {
-            Some(unsafe { self.downcast_unchecked() })
-        }
-    }
-}
-
-impl GcPointerBase {
-    pub fn allocation_size(&self) -> usize {
-        unsafe { comet::gc_size(&self.hdr) }
-    }
-
-    pub fn get_dyn(&self) -> &mut dyn GcCell {
-        unsafe {
-            std::mem::transmute(mopa::TraitObject {
-                vtable: self.hdr.get_gc_info_index().get().vtable as _,
-                data: self.data::<u8>() as _,
-            })
-        }
-    }
-
-    pub fn data<T>(&self) -> *mut T {
-        unsafe {
-            (self as *const Self as *mut u8)
-                .add(size_of::<Self>())
-                .cast()
-        }
-    }
-}
-pub fn vtable_of<T: GcCell>(x: *const T) -> usize {
-    unsafe { core::mem::transmute::<_, mopa::TraitObject>(x as *const dyn GcCell).vtable as _ }
-}
-
-pub fn vtable_of_type<T: GcCell + Sized>() -> usize {
-    vtable_of(core::ptr::null::<T>())
-}
-
-impl<T: GcCell + ?Sized> Copy for GcPointer<T> {}
-impl<T: GcCell + ?Sized> Clone for GcPointer<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T: GcCell> Deref for GcPointer<T> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*(&*self.base.as_ptr()).data::<T>() }
-    }
-}
-impl<T: GcCell> DerefMut for GcPointer<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *(&*self.base.as_ptr()).data::<T>() }
-    }
-}
-
-impl<T: GcCell + ?Sized> std::fmt::Pointer for GcPointer<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:p}", self.base)
-    }
-}
-
-impl<T: GcCell + std::fmt::Debug> std::fmt::Debug for GcPointer<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", **self)
-    }
-}
-impl<T: GcCell + std::fmt::Display> std::fmt::Display for GcPointer<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", **self)
-    }
-}
-
-pub struct WeakRef<T: GcCell> {
-    ref_: comet::gcref::WeakGcRef,
-    marker: PhantomData<T>,
-}
-
-impl<T: GcCell> WeakRef<T> {
-    pub fn upgrade(&self) -> Option<GcPointer<T>> {
-        match self.ref_.upgrade() {
-            Some(ptr) => Some(GcPointer {
-                base: unsafe { transmute(ptr) },
-                marker: PhantomData,
-            }),
-            _ => None,
-        }
-    }
-}
-#[cold]
-fn memory_oom() -> ! {
-    eprintln!("Starlight: No memory left");
-    std::process::abort();
-}
 
 pub mod cell {
     pub use super::*;
 }
 
-macro_rules! impl_prim {
-    ($($t: ty)*) => {
+macro_rules! impl_basic_gc_cell {
+    ($($ty:ty),* $(,)?) => {
         $(
-            impl GcCell for $t {}
+            impl GcCell for $ty {}
         )*
     };
 }
 
-impl_prim!(String bool f32 f64 u8 i8 u16 i16 u32 i32 u64 i64 std::fs::File u128 i128);
+impl_basic_gc_cell!(
+    String, bool, f32, f64, u8, i8, u16, i16, u32, i32, u64, i64, u128, i128
+);
 
 impl<K: GcCell, V: GcCell> GcCell for HashMap<K, V> {}
-impl<T: GcCell> GcCell for WeakRef<T> {}
 impl<T: GcCell> GcCell for Option<T> {}
 impl<T: GcCell> GcCell for Vec<T> {}
 
-impl<T: GcCell + Trace> Trace for GcPointer<T> {
-    fn trace(&self, vis: &mut Visitor) {
-        unsafe {
-            vis.trace_gcref(transmute::<_, GcRef<T>>(*self));
-        }
-    }
+pub trait Trace {
+    fn trace(&self, visitor: &mut Visitor<'_>);
 }
-impl<T: GcCell> PartialEq for GcPointer<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.base == other.base
+
+pub fn bridge_trace(value: &impl Trace, visitor: &mut dyn CometVisitor) {
+    Trace::trace(value, &mut Visitor { inner: visitor });
+}
+
+pub type FinalizationCallback = unsafe fn(*mut u8);
+
+pub trait FinalizeTrait<T> {
+    const CALLBACK: Option<FinalizationCallback> = None;
+}
+
+pub trait Finalize<T> {}
+
+pub struct Visitor<'a> {
+    inner: &'a mut dyn CometVisitor,
+}
+
+impl Visitor<'_> {
+    pub fn trace_untyped(&mut self, root: NonNull<HeapObjectHeader>) {
+        let mut root = root;
+        self.inner.mark_object(&mut root);
+    }
+
+    pub fn trace_weak(&mut self, root: NonNull<HeapObjectHeader>) {
+        let mut root = root;
+        self.inner.mark_weak(&mut root);
     }
 }
 
-impl<T: GcCell> Eq for GcPointer<T> {}
-impl<T: GcCell> Copy for WeakRef<T> {}
-impl<T: GcCell> Clone for WeakRef<T> {
+pub struct SimpleMarkingConstraint {
+    name: String,
+    exec: Box<dyn FnMut(&mut Visitor<'_>)>,
+}
+
+impl SimpleMarkingConstraint {
+    pub fn new(name: &str, exec: impl FnMut(&mut Visitor<'_>) + 'static) -> Self {
+        Self {
+            name: name.to_owned(),
+            exec: Box::new(exec),
+        }
+    }
+}
+
+unsafe impl MarkingConstraint for SimpleMarkingConstraint {
+    fn runs_at(&self) -> MarkingConstraintRuns {
+        MarkingConstraintRuns::BeforeMark
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn is_over(&self) -> bool {
+        false
+    }
+
+    fn run(&mut self, visitor: &mut dyn CometVisitor) {
+        (self.exec)(&mut Visitor { inner: visitor });
+    }
+}
+
+pub struct Heap {
+    mutator: MutatorRef<CometHeap>,
+    defer_count: usize,
+    pending_collection: bool,
+}
+
+impl Heap {
+    pub fn new(opts: &crate::options::Options) -> Self {
+        let heap_size = opts.heap_size.max(4 * 1024 * 1024);
+        let options = StickyImmixOptions::default()
+            .with_heap_size(heap_size)
+            .with_initial_size(heap_size.min(32 * 1024 * 1024))
+            .with_min_heap_size(heap_size.min(4 * 1024 * 1024))
+            .with_max_heap_size(heap_size)
+            .with_verbose(u8::from(opts.verbose_gc));
+        Self {
+            mutator: instantiate_sticky_immix::<comet::gc_base::NoOpStackDecoder>(options),
+            defer_count: 0,
+            pending_collection: false,
+        }
+    }
+
+    pub fn defer(&mut self) -> DeferPoint {
+        self.defer_count += 1;
+        DeferPoint {
+            heap: self as *mut Self,
+        }
+    }
+
+    pub fn gc(&mut self) {
+        if self.defer_count > 0 {
+            self.pending_collection = true;
+        } else {
+            let mut roots: [&mut dyn CometTrace; 0] = [];
+            self.mutator.full_collection(&mut roots);
+        }
+    }
+
+    pub fn allocate<T: GcCell + Collectable>(&mut self, value: T) -> GcPointer<T> {
+        GcPointer {
+            value: self
+                .mutator
+                .allocate(value, comet::gc_base::AllocationSpace::New),
+        }
+    }
+
+    pub unsafe fn allocate_raw<T: GcCell + Collectable>(
+        &mut self,
+        size: usize,
+    ) -> *mut GcPointerBase {
+        self.mutator
+            .allocate_raw::<T>(size)
+            .unwrap_or_else(|| memory_oom())
+            .as_raw()
+            .as_ptr()
+            .cast()
+    }
+
+    pub fn add_constraint(&mut self, constraint: impl MarkingConstraint + 'static) {
+        self.mutator.add_constraint(constraint);
+    }
+
+    pub fn make_weak<T: GcCell + Collectable>(&mut self, target: GcPointer<T>) -> WeakRef<T> {
+        WeakRef {
+            ref_: self.mutator.allocate_weak(target.value),
+            marker: PhantomData,
+        }
+    }
+
+    pub fn collect_if_necessary(&mut self) {
+        if self.defer_count > 0 {
+            self.pending_collection = true;
+            return;
+        }
+
+        self.mutator.safepoint();
+        if self.pending_collection {
+            self.pending_collection = false;
+            self.gc();
+        }
+    }
+}
+
+pub struct DeferPoint {
+    heap: *mut Heap,
+}
+
+impl Drop for DeferPoint {
+    fn drop(&mut self) {
+        unsafe {
+            let heap = &mut *self.heap;
+            heap.defer_count = heap.defer_count.saturating_sub(1);
+        }
+    }
+}
+
+#[repr(transparent)]
+pub struct GcPointerBase {
+    hdr: HeapObjectHeader,
+}
+
+impl GcPointerBase {
+    pub fn allocation_size(&self) -> usize {
+        unsafe {
+            Gc::<dyn Collectable, CometHeap>::from_raw(NonNull::from(&self.hdr))
+                .allocation_size()
+        }
+    }
+
+    pub fn get_dyn(&mut self) -> &mut dyn Collectable {
+        self.hdr.get_dyn()
+    }
+
+    pub fn data<T>(&self) -> *mut T {
+        unsafe {
+            (self as *const Self as *mut u8)
+                .add(std::mem::size_of::<Self>())
+                .cast()
+        }
+    }
+
+    pub unsafe fn mark_initialized<T: Collectable>(&mut self) {
+        let raw = NonNull::from(&mut self.hdr);
+        let _: Gc<T, CometHeap> = Gc::<std::mem::MaybeUninit<T>, CometHeap>::from_raw(raw)
+            .assume_init();
+    }
+}
+
+pub struct GcPointer<T: Collectable + ?Sized> {
+    value: Gc<T, CometHeap>,
+}
+
+impl<T: Collectable + ?Sized> GcPointer<T> {
+    pub fn untyped(self) -> NonNull<HeapObjectHeader> {
+        self.value.as_raw()
+    }
+
+    pub fn ptr_eq<U: Collectable + ?Sized>(this: &Self, other: &GcPointer<U>) -> bool {
+        this.value.as_raw() == other.value.as_raw()
+    }
+
+    pub fn as_dyn(self) -> GcPointer<dyn Collectable> {
+        GcPointer {
+            value: self.value.to_dyn(),
+        }
+    }
+
+    pub fn is<U: Collectable>(self) -> bool {
+        self.value.is::<U>()
+    }
+
+    pub fn get_dyn(&self) -> &dyn Collectable {
+        self.value.get_dyn()
+    }
+
+    pub fn get_dyn_mut(&mut self) -> &mut dyn Collectable {
+        self.value.get_dyn_mut()
+    }
+
+    pub unsafe fn downcast_unchecked<U: Collectable>(self) -> GcPointer<U> {
+        GcPointer {
+            value: self.value.downcast_unchecked(),
+        }
+    }
+
+    pub fn downcast<U: Collectable>(self) -> Option<GcPointer<U>> {
+        self.value.downcast().map(|value| GcPointer { value })
+    }
+
+    pub unsafe fn from_raw(base: NonNull<GcPointerBase>) -> Self {
+        GcPointer {
+            value: Gc::from_raw(base.cast()),
+        }
+    }
+
+    pub unsafe fn from_address(address: usize) -> Self {
+        Self::from_raw(NonNull::new_unchecked(address as *mut GcPointerBase))
+    }
+}
+
+impl<T: Collectable + ?Sized> Copy for GcPointer<T> {}
+
+impl<T: Collectable + ?Sized> Clone for GcPointer<T> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<T: GcCell> Trace for WeakRef<T> {
-    fn trace(&self, vis: &mut Visitor) {
-        vis.trace_gcref(self.ref_.slot())
+
+impl<T: Collectable> Deref for GcPointer<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
     }
 }
 
-impl<T: GcCell> GcCell for GcPointer<T> {}
+impl<T: Collectable> DerefMut for GcPointer<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.value
+    }
+}
+
+impl<T: Collectable + ?Sized> std::fmt::Pointer for GcPointer<T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Pointer::fmt(&self.value, formatter)
+    }
+}
+
+impl<T: Collectable + std::fmt::Debug> std::fmt::Debug for GcPointer<T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.value, formatter)
+    }
+}
+
+impl<T: Collectable + std::fmt::Display> std::fmt::Display for GcPointer<T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.value, formatter)
+    }
+}
+
+pub struct WeakRef<T: GcCell + Collectable> {
+    ref_: Weak<T, CometHeap>,
+    marker: PhantomData<T>,
+}
+
+impl<T: GcCell + Collectable> WeakRef<T> {
+    pub fn upgrade(&self) -> Option<GcPointer<T>> {
+        self.ref_.upgrade().map(|value| GcPointer { value })
+    }
+}
+
+impl<T: GcCell + Collectable> Copy for WeakRef<T> {}
+
+impl<T: GcCell + Collectable> Clone for WeakRef<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T: Collectable + ?Sized> PartialEq for GcPointer<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.value.as_raw() == other.value.as_raw()
+    }
+}
+
+impl<T: Collectable + ?Sized> Eq for GcPointer<T> {}
+
+impl<T: Collectable + ?Sized> Trace for GcPointer<T> {
+    fn trace(&self, visitor: &mut Visitor<'_>) {
+        visitor.trace_untyped(self.value.as_raw());
+    }
+}
+
+impl<T: GcCell + Collectable> Trace for WeakRef<T> {
+    fn trace(&self, visitor: &mut Visitor<'_>) {
+        visitor.trace_weak(NonNull::new(unsafe { self.ref_.base() }).unwrap());
+    }
+}
+
+impl<T: Trace> Trace for Option<T> {
+    fn trace(&self, visitor: &mut Visitor<'_>) {
+        if let Some(value) = self {
+            value.trace(visitor);
+        }
+    }
+}
+
+impl<T: Trace> Trace for Vec<T> {
+    fn trace(&self, visitor: &mut Visitor<'_>) {
+        for value in self {
+            value.trace(visitor);
+        }
+    }
+}
+
+impl<K: Trace, V: Trace, S> Trace for HashMap<K, V, S> {
+    fn trace(&self, visitor: &mut Visitor<'_>) {
+        for (key, value) in self {
+            key.trace(visitor);
+            value.trace(visitor);
+        }
+    }
+}
+
+macro_rules! impl_primitive_trace {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl Trace for $ty {
+                fn trace(&self, _visitor: &mut Visitor<'_>) {}
+            }
+        )*
+    };
+}
+
+impl_primitive_trace!(
+    String, bool, f32, f64, u8, i8, u16, i16, u32, i32, u64, i64, u128, i128, char
+);
+
+#[macro_export]
+macro_rules! impl_comet_compat {
+    ($ty:ty) => {
+        unsafe impl $crate::comet::cometgc::api::Trace for $ty {
+            fn trace(
+                &mut self,
+                visitor: &mut dyn $crate::comet::cometgc::api::Visitor,
+            ) {
+                $crate::comet::bridge_trace(self, visitor);
+            }
+        }
+
+        unsafe impl $crate::comet::cometgc::api::Finalize for $ty {}
+
+        impl $crate::comet::cometgc::api::Collectable for $ty {
+            fn allocation_size(&self) -> usize {
+                $crate::comet::GcCell::compute_size(self)
+            }
+        }
+    };
+}
+
+#[cold]
+fn memory_oom() -> ! {
+    eprintln!("Starlight: No memory left");
+    std::process::abort();
+}

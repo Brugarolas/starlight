@@ -102,9 +102,9 @@ pub mod old_value {
             Self::internal_new(0, OBJECT_TAG)
         }
         #[inline]
-        pub fn encode_object_value<T: GcCell + ?Sized>(val: GcPointer<T>) -> Self {
+        pub fn encode_object_value<T: crate::comet::Collectable + ?Sized>(val: GcPointer<T>) -> Self {
             Self::internal_new(
-                unsafe { std::mem::transmute::<_, usize>(val) } as _,
+                val.untyped().as_ptr() as usize as _,
                 OBJECT_TAG,
             )
         }
@@ -252,11 +252,9 @@ pub mod old_value {
         }
 
         #[inline]
-        pub fn get_object(&self) -> GcPointer<dyn GcCell> {
+        pub fn get_object(&self) -> GcPointer<dyn crate::comet::Collectable> {
             assert!(self.is_object());
-            unsafe {
-                std::mem::transmute::<_, GcPointer<dyn GcCell>>((self.0 & Self::DATA_MASK) as usize)
-            }
+            unsafe { GcPointer::from_address((self.0 & Self::DATA_MASK) as usize) }
         }
 
         /// Get number value from JS value.If value is int32 value then it is casted to f64.
@@ -891,6 +889,7 @@ impl From<f64> for JsValue {
 }
 
 impl GcCell for JsValue {}
+crate::impl_comet_compat!(JsValue);
 
 pub fn print_value(x: JsValue) {
     if x.is_number() {
@@ -932,7 +931,7 @@ impl From<f32> for JsValue {
     }
 }
 
-impl<T: GcCell + ?Sized> From<GcPointer<T>> for JsValue {
+impl<T: crate::comet::Collectable + ?Sized> From<GcPointer<T>> for JsValue {
     fn from(x: GcPointer<T>) -> Self {
         Self::encode_object_value(x)
     }
@@ -1072,6 +1071,7 @@ impl Trace for HashValueZero {
 }
 
 impl GcCell for HashValueZero {}
+crate::impl_comet_compat!(HashValueZero);
 
 pub mod new_value {
     //! TODO: This JS values results in nearly ~0.3% reduction in currently passing tests, we need to figure out why
@@ -1163,11 +1163,11 @@ pub mod new_value {
         }
 
         #[inline]
-        pub fn encode_object_value<T: GcCell + ?Sized>(val: GcPointer<T>) -> Self {
+        pub fn encode_object_value<T: crate::comet::Collectable + ?Sized>(val: GcPointer<T>) -> Self {
             Self(EncodedValueDescriptor {
                 as_bits: AsBits {
                     tag: Self::CELL_TAG as _,
-                    payload: unsafe { std::mem::transmute(val) },
+                    payload: val.untyped().as_ptr() as usize as _,
                 },
             })
         }
@@ -1316,9 +1316,9 @@ pub mod new_value {
             })
         }
         #[inline]
-        pub fn encode_object_value<T: GcCell + ?Sized>(gc: GcPointer<T>) -> Self {
+        pub fn encode_object_value<T: crate::comet::Collectable + ?Sized>(gc: GcPointer<T>) -> Self {
             Self(EncodedValueDescriptor {
-                ptr: unsafe { std::mem::transmute(gc) },
+                ptr: gc.untyped().as_ptr() as usize as _,
             })
         }
 
@@ -1393,10 +1393,10 @@ pub mod new_value {
         }
 
         #[inline]
-        pub fn get_object(self) -> GcPointer<dyn GcCell> {
+        pub fn get_object(self) -> GcPointer<dyn crate::comet::Collectable> {
             assert!(self.is_object());
 
-            unsafe { std::mem::transmute(self.0.ptr) }
+            unsafe { GcPointer::from_address(self.0.ptr as usize) }
         }
 
         #[inline]

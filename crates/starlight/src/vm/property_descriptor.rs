@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 use super::{arguments::Arguments, attributes::*, error::*, string::*, value::JsValue, *};
+use crate::comet::{FinalizeTrait, FinalizationCallback};
 use crate::gc::cell::Visitor;
 use crate::gc::cell::{GcCell, GcPointer, Trace};
 use std::ops::{Deref, DerefMut};
@@ -125,6 +126,7 @@ impl Trace for StoredSlot {
 }
 
 impl GcCell for StoredSlot {}
+crate::impl_comet_compat!(StoredSlot);
 impl StoredSlot {
     pub fn value(&self) -> JsValue {
         self.value
@@ -512,6 +514,7 @@ impl Accessor {
 }
 
 impl GcCell for Accessor {}
+crate::impl_comet_compat!(Accessor);
 
 impl Trace for Accessor {
     fn trace(&self, tracer: &mut Visitor) {

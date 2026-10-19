@@ -178,7 +178,7 @@ impl Test {
             results.push(self.run_once(harness, false, verbose, vm));
         }
 
-        if verbose>=1 && start.elapsed() > 300* Duration::MILLISECOND {
+        if verbose>=1 && start.elapsed() > Duration::from_millis(300) {
             println!("{} cost {:?}",self.name, start.elapsed());
             panic!("Too Slow!");
         }

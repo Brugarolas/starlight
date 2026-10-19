@@ -3,6 +3,10 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 use crate::vm::{code_block::FileLocation, *};
 use crate::{
+    bytecode::block::BytecodeBlock,
+    generator::{Generator, RegisterCompileError},
+};
+use crate::{
     bytecode::{opcodes::Opcode, TypeFeedBack},
     prelude::*,
     vm::{code_block::CodeBlock, context::Context},
@@ -137,6 +141,40 @@ pub struct ByteCompiler {
 }
 
 impl ByteCompiler {
+    /// Compiles source into register bytecode without activating it in the
+    /// existing stack interpreter.
+    pub fn compile_register_source(
+        ctx: GcPointer<Context>,
+        source: String,
+    ) -> Result<GcPointer<BytecodeBlock>, CompileError> {
+        let cm: Lrc<SourceMap> = Default::default();
+        let file = cm.new_source_file(FileName::Custom("<register-script>".into()), source);
+        let mut parser = Parser::new(
+            Syntax::Es(crate::vm::init_es_config()),
+            StringInput::from(&*file),
+            None,
+        );
+        let script = parser
+            .parse_script()
+            .map_err(|error| CompileError::NotYetImpl(error.kind().msg().to_string()))?;
+        if let Some(error) = parser.take_errors().into_iter().next() {
+            return Err(CompileError::NotYetImpl(error.kind().msg().to_string()));
+        }
+
+        Generator::compile_script(ctx, &script).map_err(|error| match error {
+            RegisterCompileError::Unsupported(message) => CompileError::NotYetImpl(message),
+            RegisterCompileError::RegisterLimitExceeded {
+                requested,
+                available,
+            } => CompileError::NotYetImpl(format!(
+                "register limit exceeded: requested {requested}, {available} available"
+            )),
+            RegisterCompileError::BytecodeValidation(error) => {
+                CompileError::NotYetImpl(format!("invalid register bytecode: {error:?}"))
+            }
+        })
+    }
+
     pub fn get_val(&mut self, ctx: GcPointer<Context>, val: Val) -> u32 {
         if let Some(ix) = self.val_map.get(&val) {
             return *ix;

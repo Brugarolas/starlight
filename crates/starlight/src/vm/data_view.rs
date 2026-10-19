@@ -10,7 +10,7 @@ use crate::gc::cell::{GcPointer, Trace, Visitor};
 use crate::vm::object::ObjectTag;
 use std::mem::ManuallyDrop;
 use std::{
-    intrinsics::copy_nonoverlapping,
+    ptr::copy_nonoverlapping,
     mem::{size_of, MaybeUninit},
 };
 

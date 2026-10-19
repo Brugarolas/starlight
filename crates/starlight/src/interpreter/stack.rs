@@ -1,4 +1,4 @@
-use comet::mmap::Mmap;
+use comet::utils::mmap::Mmap;
 use std::ptr::null_mut;
 
 use crate::vm::VirtualMachineRef;
@@ -47,7 +47,7 @@ impl InterpreterLoopStack {
     }
 
     pub fn new(mut vm: VirtualMachineRef) -> Self {
-        let reservation = Mmap::new(4 * 1024 * 1024);
+        let reservation = Mmap::new(4 * 1024 * 1024, 0);
 
         let mut this = Self {
             vm,

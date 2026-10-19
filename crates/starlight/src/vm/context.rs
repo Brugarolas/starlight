@@ -1,5 +1,5 @@
 use crate::{define_op_builtins, gc::cell::GcCell, vm::Lrc};
-use comet::internal::finalize_trait::FinalizeTrait;
+use crate::comet::FinalizeTrait;
 use std::{collections::HashMap, ptr::null};
 use swc_common::{errors::Handler, input::StringInput, FileName, SourceMap};
 use swc_ecmascript::parser::{Parser, Syntax};
@@ -584,6 +584,7 @@ impl GcPointer<Context> {
 }
 
 impl GcCell for Context {}
+crate::impl_comet_compat!(Context);
 
 impl Trace for Context {
     fn trace(&self, visitor: &mut Visitor) {

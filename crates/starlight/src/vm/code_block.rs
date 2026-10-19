@@ -6,7 +6,7 @@ use super::symbol_table::Symbol;
 use super::value::JsValue;
 use crate::bytecode::opcodes::*;
 use starlight_bytecode::virtual_register;
-use comet::internal::finalize_trait::FinalizeTrait;
+use crate::comet::FinalizeTrait;
 use super::context::Context;
 use crate::interpreter::frame_register_count_for;
 use crate::gc::{cell::GcPointer, cell::Visitor};
@@ -831,4 +831,5 @@ impl CodeBlock {
 }
 
 impl GcCell for CodeBlock {}
+crate::impl_comet_compat!(CodeBlock);
 impl FinalizeTrait<CodeBlock> for CodeBlock {}

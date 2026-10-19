@@ -20,7 +20,10 @@ impl NativeIterator {
         None
     }
 
-    pub fn new(mut ctx: GcPointer<Context>, obj: GcPointer<dyn GcCell>) -> GcPointer<Self> {
+    pub fn new(
+        mut ctx: GcPointer<Context>,
+        obj: GcPointer<dyn crate::comet::Collectable>,
+    ) -> GcPointer<Self> {
         let mut names = vec![];
         if let Some(mut obj) = obj.downcast::<JsObject>() {
             obj.get_property_names(
@@ -43,6 +46,7 @@ impl GcCell for NativeIterator {
     fn deser_pair(&self) -> (usize, usize) {
         unreachable!()
     }
+    crate::impl_comet_compat!(NativeIterator);
 }
 
 impl Trace for NativeIterator {

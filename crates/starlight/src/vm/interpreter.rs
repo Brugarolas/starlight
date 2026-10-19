@@ -15,7 +15,7 @@ use crate::{
     gc::cell::{GcCell, GcPointer, Trace},
 };
 use crate::{bytecode::*, gc::cell::Visitor};
-use comet::internal::finalize_trait::FinalizeTrait;
+use crate::comet::FinalizeTrait;
 use profile::{ArithProfile, ByValProfile};
 use std::intrinsics::{likely, unlikely};
 use wtf_rs::unwrap_unchecked;
@@ -1412,6 +1412,7 @@ impl SpreadValue {
 }
 
 impl GcCell for SpreadValue {}
+crate::impl_comet_compat!(SpreadValue);
 impl Trace for SpreadValue {
     fn trace(&self, visitor: &mut Visitor) {
         self.array.trace(visitor);

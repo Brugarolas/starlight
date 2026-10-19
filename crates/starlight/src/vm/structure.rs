@@ -72,6 +72,7 @@ impl MapEntry {
 }
 
 impl GcCell for MapEntry {}
+crate::impl_comet_compat!(MapEntry);
 impl Trace for MapEntry {}
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -81,6 +82,7 @@ pub struct TransitionKey {
 }
 
 impl GcCell for TransitionKey {}
+crate::impl_comet_compat!(TransitionKey);
 impl Trace for TransitionKey {}
 
 #[derive(Clone)]
@@ -182,6 +184,7 @@ impl Trace for TransitionsTable {
     }
 }
 impl GcCell for Structure {}
+crate::impl_comet_compat!(Structure);
 impl Trace for Structure {
     fn trace(&self, tracer: &mut Visitor) {
         self.transitions.trace(tracer);
@@ -271,6 +274,8 @@ impl Trace for DeletedEntryHolder {
 }
 impl GcCell for DeletedEntryHolder {}
 impl GcCell for DeletedEntry {}
+crate::impl_comet_compat!(DeletedEntryHolder);
+crate::impl_comet_compat!(DeletedEntry);
 impl Finalize<Structure> for Structure {}
 impl Structure {
     fn ctor(

@@ -30,6 +30,8 @@ pub struct Options {
     pub file: PathBuf,
     #[structopt(short = "d", long = "dumpBytecode", help = "Dump bytecode")]
     pub dump_bytecode: bool,
+    #[structopt(long = "register", help = "Execute scripts with the register bytecode interpreter")]
+    pub register: bool,
     #[structopt(long = "disableIC", help = "Disable inline caching")]
     pub disable_ic: bool,
 
@@ -51,6 +53,7 @@ impl Default for Options {
         Self {
             parallel_marking: false,
             dump_bytecode: false,
+            register: false,
             disable_ic: false,
             dump_size_classes: false,
             dump_stats: false,

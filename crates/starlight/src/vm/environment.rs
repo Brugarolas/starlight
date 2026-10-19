@@ -61,6 +61,7 @@ impl Drop for Environment {
 }
 
 impl GcCell for Environment {}
+crate::impl_comet_compat!(Environment);
 
 impl Trace for Environment {
     fn trace(&self, visitor: &mut Visitor) {

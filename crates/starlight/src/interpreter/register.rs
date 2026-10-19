@@ -62,7 +62,7 @@ impl Register {
     pub fn unboxed_double(self) -> f64 {
         unsafe { self.u.number }
     }
-    pub fn unboxed_cell(self) -> GcPointer<dyn GcCell> {
+    pub fn unboxed_cell(self) -> GcPointer<dyn crate::comet::Collectable> {
         #[cfg(target_pointer_width = "64")]
         unsafe {
             self.js_val().get_object()

@@ -1,4 +1,4 @@
-use comet::internal::{finalize_trait::FinalizeTrait, trace_trait::TraceTrait};
+use crate::comet::{FinalizeTrait, Trace as TraceTrait, Visitor};
 
 use super::{
     opcodes::{OpCode, RegisterId},
@@ -148,8 +148,9 @@ impl BytecodeBlock {
     }
 }
 impl GcCell for BytecodeBlock {}
+crate::impl_comet_compat!(BytecodeBlock);
 impl TraceTrait for BytecodeBlock {
-    fn trace(&self, vis: &mut comet::visitor::Visitor) {
+    fn trace(&self, vis: &mut Visitor<'_>) {
         match self {
             Self::Compiled(ref block) => {
                 block.trace(vis);
@@ -160,6 +161,9 @@ impl TraceTrait for BytecodeBlock {
 }
 
 pub struct BytecodeBlockInternal {
+    pub(crate) strict: bool,
+    pub(crate) name: Symbol,
+    pub(crate) is_arrow: bool,
     /// Register instruction stream. This typed IR is the canonical representation;
     /// it has no persisted or platform-dependent byte encoding.
     pub(crate) code: Vec<OpCode>,
@@ -167,6 +171,8 @@ pub struct BytecodeBlockInternal {
     pub(crate) register_count: u32,
     /// Input parameters occupy registers `0..parameter_count`.
     pub(crate) parameter_count: u32,
+    /// Number of slots required by the invocation environment.
+    pub(crate) environment_size: u32,
     pub(crate) literals: GcPointer<ArrayStorage>,
     pub(crate) parent_blocks: Vec<GcPointer<BytecodeBlock>>,
     pub(crate) structures: Vec<GcPointer<Structure>>,
@@ -185,6 +191,10 @@ impl BytecodeBlockInternal {
 
     pub fn parameter_count(&self) -> u32 {
         self.parameter_count
+    }
+
+    pub fn environment_size(&self) -> u32 {
+        self.environment_size
     }
 
     pub fn emit(&mut self, instruction: OpCode) -> InstructionIndex {
@@ -286,9 +296,11 @@ impl BytecodeBlockInternal {
                     check_register(*dst)?;
                     check_register(*src)?;
                 }
-                OpCode::GetLocal(dst, _)
-                | OpCode::GetConstant(dst, _)
-                | OpCode::GetFunction(dst, _) => {
+                OpCode::GetLocal(dst, local) => {
+                    check_register(*dst)?;
+                    check_register(*local)?;
+                }
+                OpCode::GetConstant(dst, _) | OpCode::GetFunction(dst, _) => {
                     check_register(*dst)?;
                     match instruction {
                         OpCode::GetConstant(_, index) => {
@@ -300,9 +312,11 @@ impl BytecodeBlockInternal {
                         _ => (),
                     }
                 }
-                OpCode::SetLocal(src, _) | OpCode::LoadInt(src, _) | OpCode::LoadDouble(src, _) => {
-                    check_register(*src)?
+                OpCode::SetLocal(src, local) | OpCode::InitializeLocal(src, local) => {
+                    check_register(*src)?;
+                    check_register(*local)?;
                 }
+                OpCode::LoadInt(src, _) | OpCode::LoadDouble(src, _) => check_register(*src)?,
                 OpCode::LoadFalse(dst)
                 | OpCode::LoadTrue(dst)
                 | OpCode::LoadNull(dst)
@@ -311,7 +325,14 @@ impl BytecodeBlockInternal {
                 | OpCode::CreateObject { dest: dst }
                 | OpCode::GetGlobal { dst }
                 | OpCode::GlobalThis { dst } => check_register(*dst)?,
-                OpCode::Nop => (),
+                OpCode::GetException { dst } | OpCode::GetCurrentFunction { dst } => {
+                    check_register(*dst)?
+                }
+                OpCode::DeclareGlobal { prop } => check_pool("name", *prop, self.names.len())?,
+                OpCode::Nop
+                | OpCode::CloneEnvironment
+                | OpCode::PushEnvironment { .. }
+                | OpCode::PopEnvironment => (),
                 OpCode::Call {
                     receiver,
                     argv,
@@ -467,7 +488,7 @@ impl BytecodeBlockInternal {
                 OpCode::DeclLet { env, .. }
                 | OpCode::DeclConst { env, .. }
                 | OpCode::DeclVar { env, .. } => check_register(*env)?,
-                OpCode::SetVar { src, env, .. } => {
+                OpCode::SetVar { src, env, .. } | OpCode::InitializeVar { src, env, .. } => {
                     check_register(*src)?;
                     check_register(*env)?;
                 }
@@ -527,7 +548,7 @@ impl BytecodeBlockInternal {
 }
 
 impl TraceTrait for BytecodeBlockInternal {
-    fn trace(&self, vis: &mut comet::visitor::Visitor) {
+    fn trace(&self, vis: &mut Visitor<'_>) {
         self.literals.trace(vis);
         self.parent_blocks.trace(vis);
         self.structures.trace(vis);

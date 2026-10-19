@@ -50,6 +50,7 @@ impl StructureChain {
 }
 
 impl GcCell for StructureChain {}
+crate::impl_comet_compat!(StructureChain);
 
 impl Trace for StructureChain {
     fn trace(&self, visitor: &mut Visitor) {

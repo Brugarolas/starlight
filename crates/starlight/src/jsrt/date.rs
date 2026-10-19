@@ -1,7 +1,7 @@
 use chrono::{prelude::*, Duration, LocalResult};
 use std::{
     fmt::Display,
-    intrinsics::transmute,
+    mem::transmute,
     mem::{size_of, ManuallyDrop},
 };
 

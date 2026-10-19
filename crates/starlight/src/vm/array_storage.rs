@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 use std::mem::size_of;
 
-use comet::internal::finalize_trait::{FinalizationCallback, FinalizeTrait};
+use crate::comet::{FinalizeTrait, FinalizationCallback};
 
 use super::context::Context;
 use super::value::JsValue;
@@ -234,6 +234,7 @@ impl GcCell for ArrayStorage {
     fn compute_size(&self) -> usize {
         (self.capacity as usize * size_of::<JsValue>()) + size_of::<Self>()
     }
+    crate::impl_comet_compat!(ArrayStorage);
 }
 
 impl FinalizeTrait<ArrayStorage> for ArrayStorage {

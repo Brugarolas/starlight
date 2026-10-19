@@ -1,5 +1,10 @@
 use crate::bytecode::opcodes::RegisterId;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegisterScopeError {
+    RegisterLimitExceeded { requested: usize, available: usize },
+}
+
 pub struct RegisterScope {
     registers: Vec<bool>,
     contexts: Vec<Vec<usize>>,
@@ -26,21 +31,28 @@ impl RegisterScope {
     }
 
     pub fn allocate(&mut self, temp: bool) -> RegisterId {
+        self.try_allocate(temp)
+            .expect("register bytecode supports at most 65536 registers")
+    }
+
+    pub fn try_allocate(&mut self, temp: bool) -> Result<RegisterId, RegisterScopeError> {
         for i in 0..self.registers.len() {
             if !self.register(i) {
                 self.registers[i] = !temp;
-                return i as _;
+                return Ok(i as _);
             }
         }
         let index = self.registers.len();
-        assert!(
-            index <= usize::from(u16::MAX),
-            "register bytecode supports at most 65536 registers"
-        );
+        if index > usize::from(u16::MAX) {
+            return Err(RegisterScopeError::RegisterLimitExceeded {
+                requested: 1,
+                available: usize::from(u16::MAX) + 1 - index,
+            });
+        }
         let r = self.register(index);
         assert!(!r);
         self.registers[index] = !temp;
-        index as _
+        Ok(index as _)
     }
 
     pub fn reserve_parameters(&mut self, count: u32) {
@@ -87,8 +99,13 @@ impl RegisterScope {
     }
 
     pub fn register_window(&mut self, argc: usize) -> RegisterId {
+        self.try_register_window(argc)
+            .expect("register window exceeds register capacity")
+    }
+
+    pub fn try_register_window(&mut self, argc: usize) -> Result<RegisterId, RegisterScopeError> {
         if argc == 0 {
-            return self.registers.len() as _;
+            return Ok(self.registers.len() as _);
         }
 
         let mut start = 0;
@@ -103,7 +120,7 @@ impl RegisterScope {
                     for register in start..start + argc {
                         self.registers[register] = true;
                     }
-                    return start as _;
+                    return Ok(start as _);
                 }
             } else {
                 found = 0;
@@ -111,15 +128,17 @@ impl RegisterScope {
         }
 
         let start = self.registers.len();
-        assert!(
-            start + argc <= usize::from(u16::MAX) + 1,
-            "register bytecode supports at most 65536 registers"
-        );
+        if start + argc > usize::from(u16::MAX) + 1 {
+            return Err(RegisterScopeError::RegisterLimitExceeded {
+                requested: argc,
+                available: usize::from(u16::MAX) + 1 - start,
+            });
+        }
         for i in 0..argc {
             self.register(start + i);
             self.registers[start + i] = true;
         }
-        start as _
+        Ok(start as _)
     }
 
     pub fn unprotect_window(&mut self, argv: RegisterId, argc: usize) {
@@ -216,5 +235,47 @@ mod tests {
         assert!(scope.register(0));
         assert!(scope.register(1));
         assert!(scope.register(2));
+    }
+
+    #[test]
+    fn protected_expression_result_survives_nested_allocation() {
+        let mut scope = RegisterScope::new();
+        let test = scope.allocate(true);
+        scope.protect(test);
+        let consequent = scope.allocate(true);
+        scope.protect(consequent);
+        let destination = scope.allocate(true);
+        scope.protect(destination);
+
+        scope.unprotect(test);
+        scope.unprotect(consequent);
+        let alternate = scope.allocate(true);
+
+        assert_ne!(alternate, destination);
+    }
+
+    #[test]
+    fn oversized_window_reports_capacity_instead_of_panicking() {
+        assert_eq!(
+            RegisterScope::new().try_register_window(65_537),
+            Err(super::RegisterScopeError::RegisterLimitExceeded {
+                requested: 65_537,
+                available: 65_536,
+            })
+        );
+    }
+
+    #[test]
+    fn allocation_reports_register_limit_without_panicking() {
+        let mut scope = RegisterScope::new();
+        scope.registers.resize(usize::from(u16::MAX) + 1, true);
+
+        assert_eq!(
+            scope.try_allocate(true),
+            Err(super::RegisterScopeError::RegisterLimitExceeded {
+                requested: 1,
+                available: 0,
+            })
+        );
     }
 }

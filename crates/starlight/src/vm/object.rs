@@ -28,7 +28,8 @@ use crate::{
 };
 use std::{
     collections::hash_map::Entry,
-    intrinsics::{likely, transmute, unlikely},
+    intrinsics::{likely, unlikely},
+    mem::transmute,
     marker::PhantomData,
     mem::{size_of, ManuallyDrop},
     ops::{Deref, DerefMut},
@@ -202,6 +203,7 @@ impl GcCell for JsObject {
     fn compute_size(&self) -> usize {
         object_size_with_additional(self.class)
     }
+    crate::impl_comet_compat!(JsObject);
 }
 impl Drop for JsObject {
     fn drop(&mut self) {
